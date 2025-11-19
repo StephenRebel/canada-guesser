@@ -3,6 +3,7 @@
 
 # Ignore data files
 /canada_full_city
+/cnn_processed_dataset
 
 # Ignore mac stuff
 .DS_Store
