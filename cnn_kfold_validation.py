@@ -118,7 +118,8 @@ def train_one_epoch(model, data_loader, optimizer, loss_fn, device, scaler, accu
     model.train()
     current_loss = 0.0
 
-    for i, (images, labels) in enumerate(tqdm(data_loader)):
+    # leave=False helps with screen clutter
+    for i, (images, labels) in enumerate(tqdm(data_loader), leave=False):
         images, labels = images.to(device), labels.to(device)
         # Autocast to improve memory efficiency on our resource constrained VM, also needs the scaler
         with autocast():
@@ -145,7 +146,8 @@ def validate(model, data_loader, loss_fn, device):
     all_targets = []
 
     with torch.no_grad():
-        for images, labels in tqdm(data_loader):
+        # leave=False helps with screen clutter
+        for images, labels in tqdm(data_loader, leave=False):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
 
@@ -182,11 +184,11 @@ def main():
 
     city_names = sorted([name for name in os.listdir(DATA_ROOT) if os.path.isdir(os.path.join(DATA_ROOT, name))])
 
-    print(f"Performing 5-Fold Cross-Validation for {model_name} on {hp_set}.")
+    print(f"Performing 5-Fold Cross-Validation for {model_name} on {args.hyperparam}.\n")
 
     # Driver 5-fold loop
     for fold in range(5):
-        print(f"\nFold {fold}:")
+        print(f"Fold {fold}:\n")
         train_split_df = data_splits_df[data_splits_df["fold"] != fold]
         validation_split_df = data_splits_df[data_splits_df["fold"] == fold]
 
@@ -213,10 +215,13 @@ def main():
             optimizer = optim.AdamW(model.parameters(), lr=hp_set["lr_classifier"], weight_decay=hp_set["weight_decay"])
             for epoch in range(hp_set["classifier_epochs"]):
                 training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps)
-                validation_loss = validate(model, validation_loader, loss_func, device)
-                
+                validation_loss, _, _ = validate(model, validation_loader, loss_func, device)
+                # Ignore the accuracy while just training classifier
+
                 fold_result["training_loss"].append(training_loss)
                 fold_result["validation_loss"].append(validation_loss)
+
+                print(f"Completed classifier train epoch {i}/{hp_set["classifier_epochs"]}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n")
 
         if hp_set["finetune_epochs"] > 0:
             model = unfreeze_model(model)
@@ -229,7 +234,33 @@ def main():
             best_validation_accuracy = 0
 
             for epoch in range(hp_set["finetune_epochs"]):
-                # NOTE Complete similar to previous loop but save results of best performing model
+                training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps)
+                validation_loss, predictions, targets = validate(model, validation_loader, loss_func, device)
+
+                fold_result["training_loss"].append(training_loss)
+                fold_result["validation_loss"].append(validation_loss)
+
+                # Saving the predictions and such for most accurate epoch for f1 and accuracy after
+                accuracy = np.mean(np.array(predictions) == np.array(targets))
+                if accuracy > best_validation_accuracy:
+                    best_validation_accuracy = accuracy
+                    fold_result["final_predictions"] = predictions
+                    fold_result["final_targets"] = targets
+
+                print(f"Completed finetune epoch {i}/{hp_set["finetune_epochs"]}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n\tAccuracy: {accuracy}\n")
+
+        fold_results.append(fold_result)
+
+        del model, optimizer, scaler
+        torch.cude.empty_cache()
+
+    # Generate final reports for the model and hyperparameter set
+    all_predictions, all_targets, train_losses, validation_losses = format_data(fold_results)
+    plot_loss(train_losses, validation_losses, model_name, args.hyperparam, RESULTS_DIR)
+    confusion_matrix_gen(all_predictions, all_targets, model_name, args.hyperparam, city_names, RESULTS_DIR)
+    accuracy_f1_metrics(all_predictions, all_targets, model_name, args.hyperparam, RESULTS_DIR)
+
+    print(f"5-Fold Validation run on {model_name} and {args.hyperparam} complete.")
 
 if __name__ == "__main__":
     main()

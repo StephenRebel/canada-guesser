@@ -59,6 +59,7 @@ def plot_loss(train_loss, val_loss, model_name, hp_set, results_dir):
 
 
 # Generate confusion matrix
+# helpful understanding: https://www.geeksforgeeks.org/machine-learning/confusion-matrix-machine-learning
 def confusion_matrix_gen(cm_predictions, cm_targets, model_name, hp_set, city_names, results_dir):
     cm = confusion_matrix(cm_targets, cm_predictions)
     plt.figure(figsize=(12, 10))
@@ -74,6 +75,7 @@ def confusion_matrix_gen(cm_predictions, cm_targets, model_name, hp_set, city_na
     plt.close()
 
 # Generate accuracy and f1 reports
+# https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_recall_fscore_support.html
 def accuracy_f1_metrics(all_predictions, all_targets, model_name, hp_set, results_dir):
     # Use sklearn to get all the f1 needs and create report
     precision, recall, f1, support = precision_recall_fscore_support(all_targets, all_predictions, average=None)
