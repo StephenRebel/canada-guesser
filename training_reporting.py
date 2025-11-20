@@ -16,8 +16,8 @@ def format_data(fold_results)
     for result in fold_results:
         all_predictions.extend(result["final_predictions"])
         all_targets.extend(result["final_targets"])
-        train_loss.append(result["train_loss"])
-        val_loss.append(result["val_loss"])
+        train_loss.append(result["training_loss"])
+        val_loss.append(result["validation_loss"])
 
     return all_predictions, all_targets, train_loss, val_loss
 
@@ -99,10 +99,3 @@ def accuracy_f1_metrics(all_predictions, all_targets, model_name, hp_set, result
 
     final_df = pd.concat([metrics_df, summary_row], ignore_index=True)
     final_df.to_csv(os.path.join(results_dir, f"{model_name}_{hp_set}_metrics.csv"), index=False)
-
-# Main control function
-def main():
-    pass
-
-if __name__ == "__main__":
-    main()
