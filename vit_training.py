@@ -4,7 +4,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
@@ -73,7 +72,7 @@ transform = transforms.Compose([
 
 #Apply transforms and stack
 def collate_fn(batch):
-    images = [transform(item["image"].copy()) for item in batch]
+    images = [transform(item["image"]) for item in batch]
     labels = [item["label"] for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
@@ -90,7 +89,6 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
-    scheduler = CosineAnnealingLR(optimizer, T_max=len(train_loader)*epochs)
     scaler = GradScaler() if use_amp else None
 
     #Store loss
@@ -113,21 +111,17 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
                 with autocast(device_type=device.type):
                     outputs = model(imgs)
                     loss = criterion(outputs, labels)
-            else:
-                outputs = model(imgs)
-                loss = criterion(outputs, labels)
-
-            if use_amp:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
+                outputs = model(imgs)
+                loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
 
             running_loss += loss.item() * imgs.size(0)
-            loader.set_postfix(loss=running_loss / (step * batch_size))
-            scheduler.step()
+            loader.set_postfix(loss=running_loss / len(train_loader.dataset))
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
 
@@ -200,11 +194,6 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
                 fold_dict["final_predictions"].extend(preds.cpu().tolist())
 
         fold_results.append(fold_dict)
-
-        #Clear CUDA memory
-        del model
-        del val_loader
-        torch.cuda.empty_cache()
 
         fold_end_time = time.time()
         fold_total_time = fold_end_time - fold_start_time
