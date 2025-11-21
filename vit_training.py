@@ -42,14 +42,14 @@ print(f"Using model: {model_name}")
 
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
-    0: [[1e-4, 1e-4, 32, 10], [1e-4, 5e-4, 32, 15]],   #ViT
+    0: [[1e-4, 1e-4, 16, 10], [1e-4, 5e-4, 16, 15]],   #ViT
     1: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]],   #DeiT
     2: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]]    #Swin
 }
 
 #Hyperparams
 lr, wd, batch_size, final_epochs = model_params[model_index][param_set_index]
-num_workers = 8
+num_workers = 4
 num_classes = 15
 fold_epochs = 6
 use_amp = True
@@ -72,7 +72,7 @@ transform = transforms.Compose([
 
 #Apply transforms and stack
 def collate_fn(batch):
-    images = [transform(item["image"]) for item in batch]
+    images = [transform(item["image"].copy()) for item in batch]
     labels = [item["label"] for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
@@ -85,7 +85,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
     
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=True)
     if val_data:
-        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
+        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
@@ -121,7 +121,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
                 optimizer.step()
 
             running_loss += loss.item() * imgs.size(0)
-            loader.set_postfix(loss=running_loss / len(train_loader.dataset))
+            loader.set_postfix(loss=running_loss / (step * batch_size))
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
 
@@ -172,7 +172,11 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         train_subset = train_ds.select(train_i)
         val_subset   = train_ds.select(val_i)
 
-        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+        model = timm.create_model(model_name, pretrained=True)
+        if hasattr(model, "head"):
+            model.head = nn.Linear(model.head.in_features, num_classes)
+        elif hasattr(model, "classifier"):
+            model.classifier = nn.Linear(model.classifier.in_features, num_classes)
         model.to(device)
         train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, device=device)
 
@@ -184,7 +188,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         }
 
         #Get prediction on fold i
-        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
+        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
         model.eval()
         with torch.no_grad():
             for imgs, labels in val_loader:
@@ -215,7 +219,11 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
 kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
 
 # #Train on full set
-# final_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+# model = timm.create_model(model_name, pretrained=True)
+# if hasattr(model, "head"):
+#     model.head = nn.Linear(model.head.in_features, num_classes)
+# elif hasattr(model, "classifier"):
+#     model.classifier = nn.Linear(model.classifier.in_features, num_classes)
 # final_model.to(device)
 
 # final_start_time = time.time()
