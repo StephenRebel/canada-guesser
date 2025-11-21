@@ -9,25 +9,65 @@ import timm
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
 import json
+import time
+import sys
+import os
 
-num_workers = 4
-batch_size = 16
+#Choose model
+models_dict = {
+    'vit_base_patch16_224': 224,
+    'deit3_large_patch16_224': 224,
+    'swinv2_base_patch4_window12to24_192to384': 256
+}
+
+if len(sys.argv) < 3:
+    print(f"Usage: python {sys.argv[0]} <model_index> <param_set_index>")
+    sys.exit(1)
+
+model_index = int(sys.argv[1])
+param_set_index = int(sys.argv[2])
+
+model_names = list(models_dict.keys())
+if model_index < 0 or model_index >= len(model_names):
+    print(f"Invalid model index. Must be between 0 and {len(model_names)-1}")
+    sys.exit(1)
+
+if param_set_index not in [0, 1]:
+    print("Invalid param set index. Must be 0 or 1")
+    sys.exit(1)
+
+model_name = model_names[model_index]
+IMG_SIZE = models_dict[model_name]
+print(f"Using model: {model_name}")
+
+#ViT Sets [LR, WD, BS, Epoch]
+model_params = {
+    0: [[1e-4, 1e-4, 32, 10], [1e-4, 5e-4, 32, 15]], #ViT
+    1: [[5e-5, 1e-4, 4, 10], [1e-5, 1e-4, 4, 15]],   #DeiT
+    2: [[5e-5, 1e-4, 4, 10], [1e-5, 1e-4, 4, 15]]    #Swin
+}
+
+#Hyperparams
+lr, wd, batch_size, final_epochs = model_params[model_index][param_set_index]
+num_workers = 8
+num_classes = 15
+fold_epochs = 6
 use_amp = True
-drop_last = True
-pin_memory = True
+print(f"Hyperparameters selected: LR={lr}, WD={wd}, Batch Size={batch_size}, Epochs={final_epochs}, Num Workers={num_workers}")
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #Load dataset
 dataset = load_dataset("SABR22/Canadian-streetview-cities", streaming=False)
 train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
-#Resize each image to 224 x 224
-IMG_SIZE = 224
+#Resize each image
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                         std=(0.5, 0.5, 0.5))
+                        std=(0.5, 0.5, 0.5))
 ])
 
 #Apply transforms and stack
@@ -39,23 +79,25 @@ def collate_fn(batch):
     return images, labels
 
 #Main training function
-def train_model(model, train_data, val_data=None, epochs=5, batch_size=32, device=None):
+def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, device=None):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=True)
     if val_data:
-        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
+        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd, fused=True)
     scaler = GradScaler() if use_amp else None
 
     #Store loss
     train_loss_list = []
     val_loss_list = []
 
+    #Iterate over epochs
     for epoch in range(epochs):
+        epoch_start_time = time.time()
 
         #Training
         model.train()
@@ -65,7 +107,11 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=32, devic
             imgs, labels = imgs.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            with autocast(device_type=device.type):
+            if use_amp:
+                with autocast(device_type=device.type):
+                    outputs = model(imgs)
+                    loss = criterion(outputs, labels)
+            else:
                 outputs = model(imgs)
                 loss = criterion(outputs, labels)
 
@@ -103,97 +149,106 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=32, devic
             val_loss_list.append(epoch_val_loss)
             val_acc = correct / total
             
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f} | " f"Val Loss: {epoch_val_loss:.4f} | Val Acc: {val_acc:.4f}")
+            epoch_end_time = time.time()
+            epoch_total_time = epoch_end_time - epoch_start_time
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f} | " f"Val Loss: {epoch_val_loss:.4f} | Val Acc: {val_acc:.4f} | Completed in {epoch_total_time/60:.2f} minutes")
         else:
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f}")
+            epoch_end_time = time.time()
+            epoch_total_time = epoch_end_time - epoch_start_time
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f} | Completed in {epoch_total_time/60:.2f} minutes")
     
     return train_loss_list, val_loss_list
 
 #K-fold validation
-k = 5
-kf = KFold(n_splits=k, shuffle=True, random_state=42)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-num_classes = 15
+def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, batch_size=batch_size, device=None):
+    kf = KFold(n_splits=k, shuffle=True, random_state=42)
+    fold_results = []
+    indices = range(len(train_ds))
+    kfold_start = time.time()
 
-avg_train_loss = None
-avg_val_loss = None
-final_targets = []
-final_predictions = []
+    #Iterate over folds
+    base_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+    for fold, (train_i, val_i) in enumerate(kf.split(indices), 1):
+        fold_start_time = time.time()
+        print(f"Starting fold {fold}")
 
-fold_results = []
-indices = range(len(train_ds))
+        #Train on fold i
+        train_subset = train_ds.select(train_i)
+        val_subset   = train_ds.select(val_i)
 
-for fold, (train_i, val_i) in enumerate(kf.split(indices), 1):
-    print(f"Fold {fold}")
+        model = timm.create_model(model_name, pretrained=False, num_classes=num_classes)
+        model.load_state_dict(base_model.state_dict())
+        model.to(device)
+        train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, device=device)
 
-    #Train on fold i
-    train_subset = train_ds.select(train_i)
-    val_subset   = train_ds.select(val_i)
+        fold_dict = {
+            "final_predictions": [],
+            "final_targets": [],
+            "training_loss": train_loss,
+            "validation_loss": val_loss
+        }
 
-    model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=num_classes)
-    model.to(device)
+        #Get prediction on fold i
+        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
+        model.eval()
+        with torch.no_grad():
+            for imgs, labels in val_loader:
+                imgs, labels = imgs.to(device), labels.to(device)
+                preds = model(imgs).argmax(dim=1)
+                fold_dict["final_targets"].extend(labels.cpu().tolist())
+                fold_dict["final_predictions"].extend(preds.cpu().tolist())
 
-    train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=6, device=device)
+        fold_results.append(fold_dict)
 
-    if avg_train_loss is None:
-        avg_train_loss = train_loss.copy()
-        avg_val_loss = val_loss.copy()
-    else:
-        for i in range(len(train_loss)):
-            avg_train_loss[i] += train_loss[i]
-            avg_val_loss[i] += val_loss[i]
+        #Clear CUDA memory
+        del model
+        del val_loader
+        torch.cuda.empty_cache()
 
-    #Get prediction on fold i
-    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
-    model.eval()
-    with torch.no_grad():
-        for imgs, labels in val_loader:
-            imgs, labels = imgs.to(device), labels.to(device)
-            preds = model(imgs).argmax(dim=1)
-            final_targets.extend(labels.cpu().tolist())
-            final_predictions.extend(preds.cpu().tolist())
+        fold_end_time = time.time()
+        fold_total_time = fold_end_time - fold_start_time
+        print(f"Fold {fold} completed in {fold_total_time/60:.2f} minutes")
 
-avg_train_loss = [x / k for x in avg_train_loss]
-avg_val_loss = [x / k for x in avg_val_loss]
+    kfold_end = time.time()
+    kfold_total = kfold_end - kfold_start
+    print(f"All {k} folds completed in {kfold_total/60:.2f} minutes")
 
-print("Avg Train Loss per Epoch:", avg_train_loss)
-print("Avg Val Loss per Epoch:", avg_val_loss)
+    # Save to JSON
+    os.makedirs("vit_results", exist_ok=True)
+    out_path = os.path.join("vit_results", f"{model_name}_results_{param_set_index}.json")
+    with open(out_path, "w") as f:
+        json.dump(fold_results, f)
+    print(f"Results saved to vit_results/{model_name}_results_{param_set_index}.json")
 
-#Save results
-results_dict = {
-    "avg_train_loss": avg_train_loss,
-    "avg_val_loss": avg_val_loss,
-    "final_targets": final_targets,
-    "final_predictions": final_predictions
-}
 
-# Save to JSON
-with open("vit_results.json", "w") as f:
-    json.dump(results_dict, f)
+# #Kfol_train
+# kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
 
-print("Results saved to vit_results.json")
+# #Train on full set
+# final_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+# final_model.to(device)
 
-#Train on full set
-final_model = timm.create_model('vit_small_patch16_224', pretrained=True)
-final_model.head = nn.Linear(final_model.head.in_features, num_classes)
-final_model.to(device)
-train_model(final_model, train_ds, epochs=12, batch_size=batch_size, device=device)
+# final_start_time = time.time()
+# train_model(final_model, train_ds, epochs=final_epochs, batch_size=batch_size, device=device)
+# final_end_time = time.time()
+# final_time = final_end_time - final_start_time
+# print(f"Final training completed in {final_time/60:.2f} minutes")
 
-#Test on test set
-test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
-final_model.eval()
-correct, total = 0, 0
-loader = tqdm(test_loader, desc="Testing", leave=True)
-with torch.no_grad():
-    for imgs, labels in loader:
-        imgs, labels = imgs.to(device), labels.to(device)
-        preds = final_model(imgs).argmax(dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-        loader.set_postfix({"acc": f"{correct/total:.4f}"})
-test_acc = correct / total
-print(f"Final Test Accuracy: {test_acc:.4f}")
+# #Test on test set
+# test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
+# final_model.eval()
+# correct, total = 0, 0
+# loader = tqdm(test_loader, desc="Testing", leave=True)
+# with torch.no_grad():
+#     for imgs, labels in loader:
+#         imgs, labels = imgs.to(device), labels.to(device)
+#         preds = final_model(imgs).argmax(dim=1)
+#         correct += (preds == labels).sum().item()
+#         total += labels.size(0)
+#         loader.set_postfix({"acc": f"{correct/total:.4f}"})
+# test_acc = correct / total
+# print(f"Final Test Accuracy: {test_acc:.4f}")
 
-#Save model
-torch.save(final_model.state_dict(), "vit_finetuned_canadian_streetview.pth")
-print("Model saved to vit_finetuned_canadian_streetview.pth")
+# #Save model
+# torch.save(final_model.state_dict(), "vit_finetuned_canadian_streetview.pth")
+# print("Model saved to vit_finetuned_canadian_streetview.pth")
