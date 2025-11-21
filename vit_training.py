@@ -4,6 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
@@ -16,8 +17,8 @@ import os
 #Choose model
 models_dict = {
     'vit_base_patch16_224': 224,
-    'deit3_large_patch16_224': 224,
-    'swinv2_base_patch4_window12to24_192to384': 256
+    'deit3_base_patch16_224': 224,
+    'swinv2_base_window12_192': 192
 }
 
 if len(sys.argv) < 3:
@@ -42,9 +43,9 @@ print(f"Using model: {model_name}")
 
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
-    0: [[1e-4, 1e-4, 32, 10], [1e-4, 5e-4, 32, 15]], #ViT
-    1: [[5e-5, 1e-4, 4, 10], [1e-5, 1e-4, 4, 15]],   #DeiT
-    2: [[5e-5, 1e-4, 4, 10], [1e-5, 1e-4, 4, 15]]    #Swin
+    0: [[1e-4, 1e-4, 32, 10], [1e-4, 5e-4, 32, 15]],   #ViT
+    1: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]],   #DeiT
+    2: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]]    #Swin
 }
 
 #Hyperparams
@@ -83,12 +84,13 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=True)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=True)
     if val_data:
         val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd, fused=True)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    scheduler = CosineAnnealingLR(optimizer, T_max=len(train_loader)*epochs)
     scaler = GradScaler() if use_amp else None
 
     #Store loss
@@ -125,6 +127,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
 
             running_loss += loss.item() * imgs.size(0)
             loader.set_postfix(loss=running_loss / (step * batch_size))
+            scheduler.step()
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
 
@@ -156,7 +159,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             epoch_end_time = time.time()
             epoch_total_time = epoch_end_time - epoch_start_time
             print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f} | Completed in {epoch_total_time/60:.2f} minutes")
-    
+
     return train_loss_list, val_loss_list
 
 #K-fold validation
@@ -167,7 +170,6 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
     kfold_start = time.time()
 
     #Iterate over folds
-    base_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
     for fold, (train_i, val_i) in enumerate(kf.split(indices), 1):
         fold_start_time = time.time()
         print(f"Starting fold {fold}")
@@ -176,8 +178,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         train_subset = train_ds.select(train_i)
         val_subset   = train_ds.select(val_i)
 
-        model = timm.create_model(model_name, pretrained=False, num_classes=num_classes)
-        model.load_state_dict(base_model.state_dict())
+        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
         model.to(device)
         train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, device=device)
 
@@ -222,7 +223,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
 
 
 # #Kfol_train
-# kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
+kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
 
 # #Train on full set
 # final_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
