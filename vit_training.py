@@ -42,14 +42,14 @@ print(f"Using model: {model_name}")
 
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
-    0: [[1e-4, 1e-4, 16, 10], [1e-4, 5e-4, 16, 15]],   #ViT
-    1: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]],   #DeiT
+    0: [[1e-4, 1e-4, 32, 10], [1e-4, 5e-4, 48, 15]],   #ViT
+    1: [[5e-5, 1e-4, 4, 10], [1e-5, 1e-4, 8, 15]],   #DeiT
     2: [[5e-5, 1e-4, 32, 10], [1e-5, 1e-4, 32, 15]]    #Swin
 }
 
 #Hyperparams
 lr, wd, batch_size, final_epochs = model_params[model_index][param_set_index]
-num_workers = 4
+num_workers = 8
 num_classes = 15
 fold_epochs = 6
 use_amp = True
@@ -66,8 +66,7 @@ test_ds  = dataset["test"]
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                        std=(0.5, 0.5, 0.5))
+    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
 #Apply transforms and stack
@@ -172,13 +171,9 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         train_subset = train_ds.select(train_i)
         val_subset   = train_ds.select(val_i)
 
-        model = timm.create_model(model_name, pretrained=True)
-        if hasattr(model, "head"):
-            model.head = nn.Linear(model.head.in_features, num_classes)
-        elif hasattr(model, "classifier"):
-            model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
         model.to(device)
-        train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, device=device)
+        train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, batch_size=batch_size, device=device)
 
         fold_dict = {
             "final_predictions": [],
