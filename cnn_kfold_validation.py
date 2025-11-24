@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torchvision.transforms import v2
 from PIL import Image
 import timm
@@ -19,37 +19,74 @@ from training_reporting import format_data, plot_loss, confusion_matrix_gen, acc
 DATA_ROOT = "./cnn_processed_dataset"
 CSV_FILE = "./cnn_processed_dataset/image_folds.csv"
 RESULTS_DIR = "./cnn_validation_results"
+# DATA_ROOT = "./cnn_pre_test"
+# CSV_FILE = "./cnn_pre_test/image_folds.csv"
+# RESULTS_DIR = "./cnn_validation_results_pre"
 NUM_WORKERS = 4
 IMG_SIZE = (320, 320)
 
 # Hyperparameter Sets
+# Modified since first set immediately destroyed model backbone from reading so using sets specific to given model
 HYPER_PARAM_SETS = {
-    "set_1": {
-        "lr_classifier": 1e-3,
-        "lr_finetune": 1e-4,
-        "weight_decay": 1e-4,
-        "classifier_epochs": 1,
-        "finetune_epochs": 6,
-        "batch_size": 32,
-        "accumulation_steps": 1
+    "tf_efficientnetv2_s": {
+        "set_1": {
+            "lr_classifier": 1e-3, "lr_finetune": 2e-5, "weight_decay": 1e-4,
+            "classifier_epochs": 1, "finetune_epochs": 5,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.0, "use_grad_checkpoint": False
+        },
+        "set_2": {
+            "lr_classifier": 1e-3, "lr_finetune": 2e-5, "weight_decay": 0.01,
+            "classifier_epochs": 2, "finetune_epochs": 6,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.1, "use_grad_checkpoint": False
+        },
+        "set_3": {
+            "lr_classifier": 5e-4, "lr_finetune": 5e-6, "weight_decay": 1e-4,
+            "classifier_epochs": 2, "finetune_epochs": 8,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.05, "use_grad_checkpoint": False
+        }
     },
-    "set_2": {
-        "lr_classifier": 5e-4,
-        "lr_finetune": 5e-5,
-        "weight_decay": 0.01,
-        "classifier_epochs": 1,
-        "finetune_epochs": 6,
-        "batch_size": 32,
-        "accumulation_steps": 1
+    "convnext_tiny": {
+        "set_1": {
+            "lr_classifier": 1e-3, "lr_finetune": 5e-5, "weight_decay": 1e-4,
+            "classifier_epochs": 1, "finetune_epochs": 5,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.0, "use_grad_checkpoint": False
+        },
+        "set_2": {
+            "lr_classifier": 2e-3, "lr_finetune": 1e-4, "weight_decay": 0.05,
+            "classifier_epochs": 2, "finetune_epochs": 6,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.1, "use_grad_checkpoint": False
+        },
+        "set_3": {
+            "lr_classifier": 5e-4, "lr_finetune": 1e-5, "weight_decay": 0.01,
+            "classifier_epochs": 2, "finetune_epochs": 8,
+            "batch_size": 32, "accumulation_steps": 1,
+            "label_smoothing": 0.05, "use_grad_checkpoint": False
+        }
     },
-    "set_3": {
-        "lr_classifier": 1e-3,
-        "lr_finetune": 3e-4,
-        "weight_decay": 1e-5,
-        "classifier_epochs": 0,
-        "finetune_epochs": 8,
-        "batch_size": 32,
-        "accumulation_steps": 1
+    "tf_efficientnet_b6": {
+        "set_1": {
+            "lr_classifier": 1e-3, "lr_finetune": 1e-5, "weight_decay": 1e-4,
+            "classifier_epochs": 2, "finetune_epochs": 5,
+            "batch_size": 16, "accumulation_steps": 2,
+            "label_smoothing": 0.0, "use_grad_checkpoint": True
+        },
+        "set_2": {
+            "lr_classifier": 1e-3, "lr_finetune": 1e-5, "weight_decay": 0.01,
+            "classifier_epochs": 2, "finetune_epochs": 6,
+            "batch_size": 4, "accumulation_steps": 8,
+            "label_smoothing": 0.1, "use_grad_checkpoint": True
+        },
+        "set_3": {
+            "lr_classifier": 5e-4, "lr_finetune": 5e-6, "weight_decay": 1e-4,
+            "classifier_epochs": 3, "finetune_epochs": 8,
+            "batch_size": 4, "accumulation_steps": 8,
+            "label_smoothing": 0.05, "use_grad_checkpoint": True
+        }
     }
 }
 
@@ -83,7 +120,7 @@ def get_transforms(is_train=True):
     std = [0.229, 0.224, 0.225]
     if is_train:
         return v2.Compose([
-            v2.ToImage()
+            v2.ToImage(),
             v2.RandomHorizontalFlip(p=0.5),
             v2.ColorJitter(0.1, 0.1),
             v2.ToDtype(torch.float32, scale=True),
@@ -92,13 +129,17 @@ def get_transforms(is_train=True):
     return v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True), v2.Normalize(mean=mean, std=std),])
 
 # Return the timm model format, freeze for transfer learning
-def get_model(model_name, num_classes, freeze_backbone=False):
+def get_model(model_name, num_classes, freeze_backbone=False, grad_checkpointing=False):
     model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+
+    # Ensure B6 can still train well with small batch sizes
+    if grad_checkpointing:
+        model.set_grad_checkpointing(True)
 
     # https://stackoverflow.com/questions/73531958/freezing-certain-layers-in-neural-networks-using-pytorch-image-models
     if freeze_backbone:
         for param in model.parameters():
-            para.requires_grad = False
+            param.requires_grad = False
         for param in model.get_classifier().parameters():
             param.requires_grad = True
 
@@ -114,15 +155,15 @@ def unfreeze_model(model):
 # Some helpful pieces: https://medium.com/biased-algorithms/cross-validation-in-pytorch-2f9f9fa9ab16
 # Mixed precision docs: https://docs.pytorch.org/docs/stable/amp.html
 # Helpful tutorials: https://docs.pytorch.org/docs/stable/notes/amp_examples.html
-def train_one_epoch(model, data_loader, optimizer, loss_fn, device, scaler, accum_steps):
+def train_one_epoch(model, data_loader, optimizer, loss_fn, device, scaler, accum_steps, use_tqdm):
     model.train()
     current_loss = 0.0
 
     # leave=False helps with screen clutter
-    for i, (images, labels) in enumerate(tqdm(data_loader), leave=False):
+    for i, (images, labels) in enumerate(tqdm(data_loader, leave=False, disable=not use_tqdm)):
         images, labels = images.to(device), labels.to(device)
         # Autocast to improve memory efficiency on our resource constrained VM, also needs the scaler
-        with autocast():
+        with autocast(device_type=device.type):
             outputs = model(images)
             # Accumulation steps helps for potential bigger model like EfficientNet-B6 which we looked at
             loss = loss_fn(outputs, labels) / accum_steps
@@ -138,7 +179,7 @@ def train_one_epoch(model, data_loader, optimizer, loss_fn, device, scaler, accu
     return current_loss / len(data_loader)
 
 # Validation loop, similar to training
-def validate(model, data_loader, loss_fn, device):
+def validate(model, data_loader, loss_fn, device, use_tqdm):
     model.eval()
     current_loss = 0.0
 
@@ -147,7 +188,7 @@ def validate(model, data_loader, loss_fn, device):
 
     with torch.no_grad():
         # leave=False helps with screen clutter
-        for images, labels in tqdm(data_loader, leave=False):
+        for images, labels in tqdm(data_loader, leave=False, disable=not use_tqdm):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
 
@@ -164,20 +205,22 @@ def validate(model, data_loader, loss_fn, device):
 def main():
     # Get configurations on which model to run
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True, choices=["tf_efficientnetv2_s", "convnext_tiny", "efficientnet_b6"])
+    parser.add_argument("--model", type=str, required=True, choices=["tf_efficientnetv2_s", "convnext_tiny", "tf_efficientnet_b6"])
     parser.add_argument("--hyperparam", type=str, required=True, choices=["set_1", "set_2", "set_3"])
+    parser.add_argument("--tqdm", action="store_true", help="Enable tqdm progress bars")
     args = parser.parse_args()
 
     model_name = args.model
-    hp_set = HYPER_PARAM_SETS[args.hyperparam]
+    hp_set = HYPER_PARAM_SETS[model_name][args.hyperparam]
+    use_tqdm = args.tqdm
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # May have to make changes for EfficientNet-B6 likely to OOM
     batch_size = hp_set["batch_size"]
     accumulation_steps = hp_set["accumulation_steps"]
+    use_checkpointing = hp_set["use_grad_checkpoint"]
 
     data_splits_df = pd.read_csv(CSV_FILE)
     fold_results = []
@@ -188,22 +231,22 @@ def main():
 
     # Driver 5-fold loop
     for fold in range(5):
-        print(f"Fold {fold}:\n")
+        print(f"Fold {fold + 1}:\n")
         train_split_df = data_splits_df[data_splits_df["fold"] != fold]
         validation_split_df = data_splits_df[data_splits_df["fold"] == fold]
 
         train_loader = DataLoader(
             CitiesDataset(train_split_df, DATA_ROOT, transform=get_transforms(is_train=True)),
-            batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True
+            batch_size=batch_size, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True, drop_last=True
         )
         validation_loader = DataLoader(
             CitiesDataset(validation_split_df, DATA_ROOT, transform=get_transforms(is_train=False)),
-            batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True
+            batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True, drop_last=False
         )
 
         # Create the model for this fold
-        model = get_model(model_name, len(city_names), freeze_backbone=True).to(device)
-        loss_func = nn.CrossEntropyLoss()
+        model = get_model(model_name, len(city_names), freeze_backbone=True, grad_checkpointing=use_checkpointing).to(device)
+        loss_func = nn.CrossEntropyLoss(label_smoothing=hp_set["label_smoothing"])
         scaler = GradScaler()
 
         # Results for this fold
@@ -212,30 +255,34 @@ def main():
         # Training of classifier (if scheduled)
         # AdamW suggested for better generalization which seems applicable to our diverse dataset and task
         if hp_set["classifier_epochs"] > 0:
-            optimizer = optim.AdamW(model.parameters(), lr=hp_set["lr_classifier"], weight_decay=hp_set["weight_decay"])
+            optimizer = optim.AdamW(model.get_classifier().parameters(), lr=hp_set["lr_classifier"], weight_decay=hp_set["weight_decay"])
             for epoch in range(hp_set["classifier_epochs"]):
-                training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps)
-                validation_loss, _, _ = validate(model, validation_loader, loss_func, device)
+                training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps, use_tqdm)
+                validation_loss, _, _ = validate(model, validation_loader, loss_func, device, use_tqdm)
                 # Ignore the accuracy while just training classifier
 
                 fold_result["training_loss"].append(training_loss)
                 fold_result["validation_loss"].append(validation_loss)
 
-                print(f"Completed classifier train epoch {i}/{hp_set["classifier_epochs"]}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n")
+                print(f"Completed classifier train epoch {epoch + 1}/{hp_set['classifier_epochs']}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n")
 
         if hp_set["finetune_epochs"] > 0:
             model = unfreeze_model(model)
             # Splitting learing rates so new classifier keeps learning at faster rate while making smaller changes to whole network
+            # NOTE "classifier" works for efficientnetv2-s check for others when get to them
+            classifier_params = [param for name, param in model.named_parameters() if "classifier" in name]
+            backbone_params   = [param for name, param in model.named_parameters() if "classifier" not in name]
+
             optimizer = optim.AdamW([
-                {"params": model.get_classifier().parameters(), "lr": hp["lr_classifier"]},
-                {"params": model.features.parameters() if hasattr(model, "features") else model.parameters(), "lr": hp["lr_finetune"]}
+                {"params": classifier_params, "lr": hp_set["lr_classifier"]},
+                {"params": backbone_params, "lr": hp_set["lr_finetune"]},
             ], weight_decay=hp_set["weight_decay"])
 
             best_validation_accuracy = 0
 
             for epoch in range(hp_set["finetune_epochs"]):
-                training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps)
-                validation_loss, predictions, targets = validate(model, validation_loader, loss_func, device)
+                training_loss = train_one_epoch(model, train_loader, optimizer, loss_func, device, scaler, accumulation_steps, use_tqdm)
+                validation_loss, predictions, targets = validate(model, validation_loader, loss_func, device, use_tqdm)
 
                 fold_result["training_loss"].append(training_loss)
                 fold_result["validation_loss"].append(validation_loss)
@@ -247,18 +294,18 @@ def main():
                     fold_result["final_predictions"] = predictions
                     fold_result["final_targets"] = targets
 
-                print(f"Completed finetune epoch {i}/{hp_set["finetune_epochs"]}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n\tAccuracy: {accuracy}\n")
+                print(f"Completed finetune epoch {epoch + 1}/{hp_set['finetune_epochs']}.\n\tTraining loss: {training_loss} - Validation loss: {validation_loss}\n\tAccuracy: {accuracy}\n")
 
         fold_results.append(fold_result)
 
         del model, optimizer, scaler
-        torch.cude.empty_cache()
+        torch.cuda.empty_cache()
 
     # Generate final reports for the model and hyperparameter set
     all_predictions, all_targets, train_losses, validation_losses = format_data(fold_results)
     plot_loss(train_losses, validation_losses, model_name, args.hyperparam, RESULTS_DIR)
     confusion_matrix_gen(all_predictions, all_targets, model_name, args.hyperparam, city_names, RESULTS_DIR)
-    accuracy_f1_metrics(all_predictions, all_targets, model_name, args.hyperparam, RESULTS_DIR)
+    accuracy_f1_metrics(all_predictions, all_targets, model_name, args.hyperparam, city_names, RESULTS_DIR)
 
     print(f"5-Fold Validation run on {model_name} and {args.hyperparam} complete.")
 

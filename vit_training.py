@@ -43,7 +43,7 @@ print(f"Using model: {model_name}")
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
     0: [[1e-4, 1e-4, 32, 12], [5e-4, 5e-4, 48, 18]],   #ViT
-    1: [[5e-5, 1e-4, 16, 12], [3e-5, 1e-4, 24, 18]],   #DeiT
+    1: [[5e-5, 1e-4, 32, 12], [3e-5, 1e-4, 48, 18]],   #DeiT
     2: [[5e-5, 1e-4, 24, 12], [3e-5, 5e-4, 32, 18]]    #Swin
 }
 
