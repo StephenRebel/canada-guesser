@@ -134,7 +134,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
         optimizer,
         t_initial=total_epochs,
         lr_min=1e-6,
-        warmup_t=warmup_steps // len(train_loader),   # convert steps → epochs
+        warmup_t=warmup_steps // len(train_loader),
         warmup_lr_init=1e-6,
         warmup_prefix=True
     )
@@ -151,7 +151,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
         model.train()
         running_loss = 0.0
         loader = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
-        for imgs, labels in loader:
+        for step, (imgs, labels) in enumerate(loader, 1):
             imgs, labels = imgs.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -166,7 +166,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             scaler.update()
 
             running_loss += loss.item() * imgs.size(0)
-            loader.set_postfix(loss=f"{running_loss/(loader.n+1):.4f}")
+            loader.set_postfix(loss=running_loss / (step * batch_size))
 
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
