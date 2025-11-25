@@ -17,7 +17,7 @@ import os
 models_dict = {
     'vit_base_patch16_224': 224,
     'deit3_base_patch16_224': 224,
-    'swinv2_base_window16_256': 256
+    'swinv2_base_window12_192': 192
 }
 
 if len(sys.argv) < 3:
@@ -213,7 +213,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         train_subset = train_ds.select(train_i)
         val_subset   = train_ds.select(val_i)
 
-        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes, img_size=IMG_SIZE)
+        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
         model.to(device)
         train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, batch_size=batch_size, device=device)
 
