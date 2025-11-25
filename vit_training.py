@@ -17,7 +17,7 @@ import os
 models_dict = {
     'vit_base_patch16_224': 224,
     'deit3_base_patch16_224': 224,
-    'swinv2_base_window12_192': 192
+    'swinv2_base_window16_256': 256
 }
 
 if len(sys.argv) < 3:
@@ -51,7 +51,7 @@ model_params = {
 lr, wd, batch_size, final_epochs = model_params[model_index][param_set_index]
 num_workers = 8
 num_classes = 15
-fold_epochs = 6
+fold_epochs = 8
 use_amp = True
 print(f"Hyperparameters selected: LR={lr}, WD={wd}, Batch Size={batch_size}, Epochs={final_epochs}, Num Workers={num_workers}")
 
@@ -213,7 +213,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         train_subset = train_ds.select(train_i)
         val_subset   = train_ds.select(val_i)
 
-        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+        model = timm.create_model(model_name, pretrained=True, num_classes=num_classes, img_size=IMG_SIZE)
         model.to(device)
         train_loss, val_loss = train_model(model, train_subset, val_subset, epochs=epochs, batch_size=batch_size, device=device)
 
