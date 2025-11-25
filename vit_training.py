@@ -69,23 +69,13 @@ dataset = load_dataset("SABR22/Canadian-streetview-cities", streaming=False)
 train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
-#Resize each image
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-])
-
 #Data augmentation
 train_transform = create_transform(
     input_size=IMG_SIZE,
     is_training=True,
     color_jitter=0.4,
     auto_augment='rand-m9-mstd0.5-inc1',
-    interpolation='bicubic',
-    re_prob=0.25,
-    remode='pixel',
-    count=1,
+    interpolation='bicubic'
 )
 
 val_transform = create_transform(
@@ -103,12 +93,12 @@ mixup_fn = FastCollateMixup(**mixup_args)
 
 #Collate functions
 def train_collate_fn(batch):
-    batch = [(train_transform(item["image"]), item["label"]) for item in batch]
+    batch = [(train_transform(item["image"]), int(item["label"].item() if isinstance(item["label"], torch.Tensor) else item["label"])) for item in batch]
     return mixup_fn(*default_collate(batch))
 
 def val_collate_fn(batch):
     images = [val_transform(item["image"].copy()) for item in batch]
-    labels = [item["label"] for item in batch]
+    labels = [int(item["label"].item() if isinstance(item["label"], torch.Tensor) else item["label"]) for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
     return images, labels
