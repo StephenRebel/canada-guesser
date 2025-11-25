@@ -6,12 +6,19 @@ from torchvision import transforms
 from torch.amp import GradScaler, autocast
 from datasets import load_dataset
 import timm
+from timm.data import Mixup, FastCollateMixup
+from timm.data import create_transform
+from timm.scheduler import CosineLRScheduler
+from torch.utils.data._utils.collate import default_collate
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
 import json
 import time
 import sys
 import os
+
+torch.backends.cudnn.benchmark = True
+torch.set_float32_matmul_precision('high')
 
 #Choose model
 models_dict = {
@@ -42,8 +49,8 @@ print(f"Using model: {model_name}")
 
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
-    0: [[1e-4, 1e-4, 32, 12], [5e-4, 5e-4, 48, 18]],   #ViT
-    1: [[5e-5, 1e-4, 16, 12], [3e-5, 1e-4, 24, 18]],   #DeiT
+    0: [[1e-4, 1e-4, 32, 12], [2e-4, 1e-4, 64, 18]],   #ViT
+    1: [[5e-5, 1e-4, 32, 12], [3e-5, 1e-4, 48, 18]],   #DeiT
     2: [[5e-5, 1e-4, 24, 12], [3e-5, 5e-4, 32, 18]]    #Swin
 }
 
@@ -51,7 +58,7 @@ model_params = {
 lr, wd, batch_size, final_epochs = model_params[model_index][param_set_index]
 num_workers = 8
 num_classes = 15
-fold_epochs = 6
+fold_epochs = 8
 use_amp = True
 print(f"Hyperparameters selected: LR={lr}, WD={wd}, Batch Size={batch_size}, Epochs={final_epochs}, Num Workers={num_workers}")
 
@@ -69,9 +76,38 @@ transform = transforms.Compose([
     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
-#Apply transforms and stack
-def collate_fn(batch):
-    images = [transform(item["image"].copy()) for item in batch]
+#Data augmentation
+train_transform = create_transform(
+    input_size=IMG_SIZE,
+    is_training=True,
+    color_jitter=0.4,
+    auto_augment='rand-m9-mstd0.5-inc1',
+    interpolation='bicubic',
+    re_prob=0.25,
+    remode='pixel',
+    count=1,
+)
+
+val_transform = create_transform(
+    input_size=IMG_SIZE,
+    is_training=False,
+    interpolation='bicubic',
+)
+
+mixup_args = dict(
+    mixup_alpha=0.8, cutmix_alpha=1.0, cutmix_minmax=None,
+    prob=1.0, switch_prob=0.5, mode='batch',
+    correct_lam=True, label_smoothing=0.1, num_classes=num_classes
+)
+mixup_fn = FastCollateMixup(**mixup_args)
+
+#Collate functions
+def train_collate_fn(batch):
+    batch = [(train_transform(item["image"]), item["label"]) for item in batch]
+    return mixup_fn(*default_collate(batch))
+
+def val_collate_fn(batch):
+    images = [val_transform(item["image"].copy()) for item in batch]
     labels = [item["label"] for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
@@ -82,13 +118,25 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=train_collate_fn, pin_memory=True, drop_last=True)
     if val_data:
-        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
+        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=val_collate_fn, pin_memory=True, drop_last=False)
     
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
     scaler = GradScaler() if use_amp else None
+
+    #Warm up and scheduler
+    total_steps = len(train_loader) * epochs
+    warmup_steps = max(500, int(0.1 * total_steps))
+    scheduler = CosineLRScheduler(
+        optimizer,
+        t_initial=total_steps - warmup_steps,
+        lr_min=1e-6,
+        warmup_lr_init=1e-6,
+        warmup_t=warmup_steps,
+        cycle_limit=1
+    )
 
     #Store loss
     train_loss_list = []
@@ -106,21 +154,21 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             imgs, labels = imgs.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            if use_amp:
-                with autocast(device_type=device.type):
-                    outputs = model(imgs)
-                    loss = criterion(outputs, labels)
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
+            with autocast(device_type=device.type):
                 outputs = model(imgs)
                 loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
 
             running_loss += loss.item() * imgs.size(0)
-            loader.set_postfix(loss=running_loss / (step * batch_size))
+            current_lr = optimizer.param_groups[0]['lr']
+            loader.set_postfix(loss=running_loss/(step*batch_size), lr=f"{current_lr:.2e}")
+
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
 
@@ -133,10 +181,11 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             with torch.no_grad():
                 for imgs, labels in val_loader:
                     imgs, labels = imgs.to(device), labels.to(device)
-                    outputs = model(imgs)
-                    loss = criterion(outputs, labels)
-                    val_running_loss += loss.item() * imgs.size(0)
+                    with autocast(device_type=device.type):
+                        outputs = model(imgs)
+                        loss = criterion(outputs, labels)
 
+                    val_running_loss += loss.item() * imgs.size(0)
                     preds = outputs.argmax(dim=1)
                     correct += (preds == labels).sum().item()
                     total += labels.size(0)
@@ -183,7 +232,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         }
 
         #Get prediction on fold i
-        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=True, drop_last=False)
+        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=val_collate_fn, pin_memory=True, drop_last=False)
         model.eval()
         with torch.no_grad():
             for imgs, labels in val_loader:
@@ -214,11 +263,7 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
 kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
 
 # #Train on full set
-# model = timm.create_model(model_name, pretrained=True)
-# if hasattr(model, "head"):
-#     model.head = nn.Linear(model.head.in_features, num_classes)
-# elif hasattr(model, "classifier"):
-#     model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+# final_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
 # final_model.to(device)
 
 # final_start_time = time.time()
@@ -228,20 +273,25 @@ kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epoc
 # print(f"Final training completed in {final_time/60:.2f} minutes")
 
 # #Test on test set
-# test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn, pin_memory=False, drop_last=False)
+# test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=val_collate_fn, pin_memory=False, drop_last=False)
 # final_model.eval()
 # correct, total = 0, 0
 # loader = tqdm(test_loader, desc="Testing", leave=True)
 # with torch.no_grad():
 #     for imgs, labels in loader:
 #         imgs, labels = imgs.to(device), labels.to(device)
-#         preds = final_model(imgs).argmax(dim=1)
+        
+#         with autocast(device_type=device.type):
+#             logits = final_model(imgs)
+#         preds = logits.argmax(dim=1)
+        
 #         correct += (preds == labels).sum().item()
 #         total += labels.size(0)
-#         loader.set_postfix({"acc": f"{correct/total:.4f}"})
+#         loader.set_postfix(acc=f"{correct/total:.4f}")
 # test_acc = correct / total
 # print(f"Final Test Accuracy: {test_acc:.4f}")
 
 # #Save model
-# torch.save(final_model.state_dict(), "vit_finetuned_canadian_streetview.pth")
-# print("Model saved to vit_finetuned_canadian_streetview.pth")
+# os.makedirs("models", exist_ok=True)
+# torch.save(final_model.state_dict(), f"models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
+# print(f"Model saved to models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
