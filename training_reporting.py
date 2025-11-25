@@ -1,11 +1,14 @@
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
+import numpy as np
+import pandas as pd
 
 # Functions to compute training confusion matrices and graphs for models.
 
 # Format data
-def format_data(fold_results)
+def format_data(fold_results):
     # Combine all folds
     all_predictions = []
     all_targets = []
@@ -76,13 +79,13 @@ def confusion_matrix_gen(cm_predictions, cm_targets, model_name, hp_set, city_na
 
 # Generate accuracy and f1 reports
 # https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_recall_fscore_support.html
-def accuracy_f1_metrics(all_predictions, all_targets, model_name, hp_set, results_dir):
+def accuracy_f1_metrics(all_predictions, all_targets, model_name, hp_set, city_names, results_dir):
     # Use sklearn to get all the f1 needs and create report
     precision, recall, f1, support = precision_recall_fscore_support(all_targets, all_predictions, average=None)
     accuracy = np.sum(np.array(all_targets) == np.array(all_predictions)) / len(all_targets)
 
     metrics_df = pd.DataFrame({
-        "Class": class_names,
+        "Class": city_names,
         "Precision": precision,
         "Recall": recall,
         "F1-Score": f1,
