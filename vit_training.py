@@ -93,15 +93,31 @@ mixup_fn = FastCollateMixup(**mixup_args)
 
 #Collate functions
 def train_collate_fn(batch):
-    batch = [(train_transform(item["image"]), int(item["label"].item() if isinstance(item["label"], torch.Tensor) else item["label"])) for item in batch]
-    return mixup_fn(*default_collate(batch))
+    processed = []
+    for item in batch:
+        img = train_transform(item["image"])
+        label = item["label"]
+        if isinstance(label, torch.Tensor):
+            label = label.item()
+        elif not isinstance(label, int):
+            label = int(label)
+        processed.append((img, label))
+
+    return mixup_fn(*default_collate(processed))
 
 def val_collate_fn(batch):
-    images = [val_transform(item["image"].copy()) for item in batch]
-    labels = [int(item["label"].item() if isinstance(item["label"], torch.Tensor) else item["label"]) for item in batch]
-    images = torch.stack(images)
-    labels = torch.tensor(labels, dtype=torch.long)
-    return images, labels
+    images = []
+    labels = []
+    for item in batch:
+        images.append(val_transform(item["image"].copy()))
+        label = item["label"]
+        if isinstance(label, torch.Tensor):
+            label = label.item()
+        elif not isinstance(label, int):
+            label = int(label)
+        labels.append(label)
+    
+    return torch.stack(images), torch.tensor(labels, dtype=torch.long)
 
 #Main training function
 def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, device=None):
