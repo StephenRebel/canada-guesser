@@ -129,13 +129,14 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
     #Warm up and scheduler
     total_steps = len(train_loader) * epochs
     warmup_steps = max(500, int(0.1 * total_steps))
+    total_epochs = epochs
     scheduler = CosineLRScheduler(
         optimizer,
-        t_initial=total_steps - warmup_steps,
+        t_initial=total_epochs,
         lr_min=1e-6,
+        warmup_t=warmup_steps // len(train_loader),   # convert steps → epochs
         warmup_lr_init=1e-6,
-        warmup_t=warmup_steps,
-        cycle_limit=1
+        warmup_prefix=True
     )
 
     #Store loss
@@ -150,7 +151,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
         model.train()
         running_loss = 0.0
         loader = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
-        for step, (imgs, labels) in enumerate(loader, 1):
+        for imgs, labels in loader:
             imgs, labels = imgs.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -163,11 +164,9 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
 
             running_loss += loss.item() * imgs.size(0)
-            current_lr = optimizer.param_groups[0]['lr']
-            loader.set_postfix(loss=running_loss/(step*batch_size), lr=f"{current_lr:.2e}")
+            loader.set_postfix(loss=f"{running_loss/(loader.n+1):.4f}")
 
         epoch_train_loss = running_loss / len(train_loader.dataset)
         train_loss_list.append(epoch_train_loss)
@@ -201,6 +200,8 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
             epoch_end_time = time.time()
             epoch_total_time = epoch_end_time - epoch_start_time
             print(f"Epoch {epoch+1}/{epochs} | Train Loss: {epoch_train_loss:.4f} | Completed in {epoch_total_time/60:.2f} minutes")
+        
+        scheduler.step(epoch + 1)
 
     return train_loss_list, val_loss_list
 
