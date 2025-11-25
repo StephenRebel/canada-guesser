@@ -6,7 +6,7 @@ from torchvision import transforms
 from torch.amp import GradScaler, autocast
 from datasets import load_dataset
 import timm
-from timm.data import Mixup, FastCollateMixup
+from timm.data import Mixup
 from timm.data import create_transform
 from timm.scheduler import CosineLRScheduler
 from torch.utils.data._utils.collate import default_collate
@@ -84,38 +84,33 @@ val_transform = create_transform(
     interpolation='bicubic',
 )
 
-mixup_args = dict(
-    mixup_alpha=0.8, cutmix_alpha=1.0, cutmix_minmax=None,
-    prob=1.0, switch_prob=0.5, mode='batch',
-    correct_lam=True, label_smoothing=0.1, num_classes=num_classes
+mixup = Mixup(
+    mixup_alpha=0.8,
+    cutmix_alpha=1.0,
+    prob=1.0,
+    switch_prob=0.5,
+    label_smoothing=0.1,
+    num_classes=num_classes
 )
-mixup_fn = FastCollateMixup(**mixup_args)
 
 #Collate functions
 def train_collate_fn(batch):
-    samples = []
-    for item in batch:
-        img = item["image"]
-        label = item["label"]
-        if isinstance(label, torch.Tensor):
-            label = label.item()
-        else:
-            label = int(label)
-        samples.append((img, label))
-    return mixup_fn(samples, train_transform)
-
-def val_collate_fn(batch):
-    images = []
+    images = [item["image"] for item in batch]
     labels = []
     for item in batch:
-        img = val_transform(item["image"].copy())
         label = item["label"]
         if isinstance(label, torch.Tensor):
             label = label.item()
         else:
             label = int(label)
-        images.append(img)
         labels.append(label)
+    images = torch.stack([train_transform(img) for img in images])
+    labels = torch.tensor(labels, dtype=torch.long)
+    return mixup(images, labels)
+
+def val_collate_fn(batch):
+    images = [val_transform(item["image"].copy()) for item in batch]
+    labels = [int(item["label"].item() if isinstance(item["label"], torch.Tensor) else item["label"]) for item in batch]
     return torch.stack(images), torch.tensor(labels, dtype=torch.long)
 
 #Main training function
