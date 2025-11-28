@@ -43,8 +43,8 @@ print(f"Using model: {model_name}")
 #ViT Sets [LR, WD, BS, Epoch]
 model_params = {
     0: [[1e-4, 1e-4, 32, 12], [2e-4, 1e-4, 64, 18]],   #ViT
-    1: [[5e-5, 1e-4, 32, 12], [3e-5, 1e-4, 48, 18]],   #DeiT
-    2: [[5e-5, 1e-4, 24, 12], [3e-5, 5e-4, 32, 18]]    #Swin
+    1: [[5e-5, 1e-4, 32, 12], [5e-5, 0.05, 64, 18]],   #DeiT
+    2: [[2e-5, 5e-4, 34, 12], [3e-5, 5e-4, 32, 18]]    #Swin
 }
 
 #Hyperparams
@@ -77,7 +77,6 @@ test_transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
-
 
 #Apply transforms and stack
 def train_collate_fn(batch):
