@@ -134,13 +134,13 @@ def accuracy_f1_metrics(all_predictions, all_targets, class_names, model_name, h
     final_df = pd.concat([metrics_df, summary_row], ignore_index=True)
     final_df.to_csv(os.path.join(results_dir, f"{model_name}_{hp_set}_metrics.csv"), index=False)
 
-class_names = [
-    "Calgary", "Charlottetown", "Edmonton", "Halifax", "Hamilton",
-    "Kitchener-Waterloo", "Montreal", "Ottawa-Gatineau", "Quebec City", "Saskatoon",
-    "St Johns", "Toronto", "Vancouver", "Victoria", "Winnipeg",
-]
-
 if __name__ == "__main__":
+    class_names = [
+        "Calgary", "Charlottetown", "Edmonton", "Halifax", "Hamilton",
+        "Kitchener-Waterloo", "Montreal", "Ottawa-Gatineau", "Quebec City", "Saskatoon",
+        "St Johns", "Toronto", "Vancouver", "Victoria", "Winnipeg",
+    ]
+
     results_path = "vit_results/swinv2_base_window12_192_final_training_results_0.json"
     model_name = "swinv2_base_window12_192"
     hp_set = "1"
