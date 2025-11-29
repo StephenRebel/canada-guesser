@@ -11,9 +11,11 @@ from sklearn.model_selection import StratifiedKFold
 # Configurations
 TARGET_IMAGE_SIZE = (320, 320)
 # OUTPUT_DIR = "./cnn_processed_dataset" # target for training set
-OUTPUT_DIR = "./cnn_testing_dataset" # target for testing set
+# OUTPUT_DIR = "./cnn_testing_dataset" # target for testing set
+OUTPUT_DIR = "./cnn_pre_testing"
 HF_DATASET_ID = "SABR22/Canadian-streetview-cities"
 K_FOLD_CSV = "image_folds.csv"
+TEST_CSV = "test_set.csv"
 N_FOLDS = 5
 
 def resize_and_pad(img, target_size):
@@ -74,7 +76,7 @@ def create_folds():
         city_path = os.path.join(OUTPUT_DIR, city_name)
         files = os.listdir(city_path)
         for filename in files:
-            if filename.lower().endswith(("jpg")):
+            if filename.lower().endswith("jpg"):
                 filepaths.append(os.path.join(city_name, filename))
                 labels.append(city_name)
 
@@ -94,7 +96,45 @@ def create_folds():
 
     city_df.to_csv(os.path.join(OUTPUT_DIR, K_FOLD_CSV), index=False)
 
+def create_test():
+    filepaths = []
+    labels = []
+
+    # Collect cities (same as your original code)
+    cities = sorted([city_dir for city_dir in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, city_dir))])
+
+    for city_name in cities:
+        city_path = os.path.join(OUTPUT_DIR, city_name)
+        files = os.listdir(city_path)
+        for filename in files:
+            if filename.lower().endswith("jpg"):
+                filepaths.append(os.path.join(city_name, filename))
+                labels.append(city_name)
+
+    # Create dataframe
+    city_df = pd.DataFrame({
+        "filepath": filepaths,
+        "label": labels
+    })
+
+    print(f"Total files: {len(city_df)}")
+
+    # Build dataframe
+    city_df = pd.DataFrame({
+        "filepath": filepaths,
+        "label": labels
+    })
+
+    print(f"Total files: {len(city_df)}")
+
+    city_df = city_df.sample(frac=1.0, random_state=42).reset_index(drop=True)
+
+    # Save CSV
+    city_df.to_csv(os.path.join(OUTPUT_DIR, TEST_CSV), index=False)
+
 # Processing calls
-process_dataset()
+# process_dataset()
 
 # create_folds()
+
+create_test()
