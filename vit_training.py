@@ -44,7 +44,7 @@ print(f"Using model: {model_name}")
 model_params = {
     0: [[1e-4, 1e-4, 32, 12], [2e-4, 1e-4, 64, 18]],   #ViT
     1: [[5e-5, 1e-4, 32, 12], [5e-5, 0.05, 64, 18]],   #DeiT
-    2: [[2e-5, 5e-4, 34, 12], [3e-5, 5e-4, 32, 18]]    #Swin
+    2: [[2e-5, 5e-4, 34, 18], [3e-5, 5e-4, 32, 18]]    #Swin
 }
 
 #Hyperparams
@@ -250,40 +250,58 @@ def kfold_train(train_ds, model_name, num_classes=15, k=5, epochs=fold_epochs, b
         json.dump(fold_results, f)
     print(f"Results saved to vit_results/{model_name}_results_{param_set_index}.json")
 
+#Kfol_train
+#kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
 
-# #Kfol_train
-kfold_train(train_ds, model_name, num_classes=num_classes, k=5, epochs=fold_epochs, batch_size=batch_size, device=device)
+#Train on full set
+final_model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
+final_model.to(device)
 
-# #Train on full set
-# final_model = timm.create_model(model_name, pretrained=True)
-# if hasattr(final_model, "head"):
-#     final_model.head = nn.Linear(final_model.head.in_features, num_classes)
-# elif hasattr(final_model, "classifier"):
-#     final_model.classifier = nn.Linear(final_model.classifier.in_features, num_classes)
-# final_model.to(device)
+final_start_time = time.time()
+final_train_losses, _ = train_model(final_model, train_ds, val_data=None, epochs=final_epochs, batch_size=batch_size, device=device)
+final_end_time = time.time()
+final_time = final_end_time - final_start_time
+print(f"Final training completed in {final_time/60:.2f} minutes")
 
-# final_start_time = time.time()
-# train_model(final_model, train_ds, epochs=final_epochs, batch_size=batch_size, device=device)
-# final_end_time = time.time()
-# final_time = final_end_time - final_start_time
-# print(f"Final training completed in {final_time/60:.2f} minutes")
+#Test on test set
+test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=test_collate_fn, pin_memory=False, drop_last=False)
+final_model.eval()
+final_predictions = []
+final_targets = []
+correct, total = 0, 0
+loader = tqdm(test_loader, desc="Testing", leave=True)
 
-# #Test on test set
-# test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=test_collate_fn, pin_memory=False, drop_last=False)
-# final_model.eval()
-# correct, total = 0, 0
-# loader = tqdm(test_loader, desc="Testing", leave=True)
-# with torch.no_grad():
-#     for imgs, labels in loader:
-#         imgs, labels = imgs.to(device), labels.to(device)
-#         preds = final_model(imgs).argmax(dim=1)
-#         correct += (preds == labels).sum().item()
-#         total += labels.size(0)
-#         loader.set_postfix({"acc": f"{correct/total:.4f}"})
-# test_acc = correct / total
-# print(f"Final Test Accuracy: {test_acc:.4f}")
+print("Evaluating on official test set...")
+with torch.no_grad():
+    for imgs, labels in tqdm(test_loader, desc="Final Test"):
+        imgs, labels = imgs.to(device), labels.to(device)
+        outputs = final_model(imgs)
+        preds = outputs.argmax(dim=1)
+        
+        final_predictions.extend(preds.cpu().tolist())
+        final_targets.extend(labels.cpu().tolist())
+        
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
 
-# # #Save model
-# os.makedirs("models", exist_ok=True)
-# torch.save(final_model.state_dict(), f"models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
-# print(f"Model saved to models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
+test_acc = correct / total
+print(f"Final Test Accuracy: {test_acc:.4f}")
+
+final_fold_dict = {
+    "final_predictions": final_predictions,
+    "final_targets": final_targets,
+    "training_loss": final_train_losses,
+    "validation_loss": []
+}
+final_results = [final_fold_dict]
+
+os.makedirs("vit_results", exist_ok=True)
+final_json_path = f"vit_results/{model_name}_final_training_results_{param_set_index}.json"
+with open(final_json_path, "w") as f:
+    json.dump(final_results, f, indent=2)
+print(f"Final results saved → {final_json_path}")
+
+#Save model
+os.makedirs("models", exist_ok=True)
+torch.save(final_model.state_dict(), f"models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
+print(f"Model saved to models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
