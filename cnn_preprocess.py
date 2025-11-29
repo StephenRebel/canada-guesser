@@ -10,7 +10,8 @@ from sklearn.model_selection import StratifiedKFold
 
 # Configurations
 TARGET_IMAGE_SIZE = (320, 320)
-OUTPUT_DIR = "./cnn_processed_dataset"
+# OUTPUT_DIR = "./cnn_processed_dataset" # target for training set
+OUTPUT_DIR = "./cnn_testing_dataset" # target for testing set
 HF_DATASET_ID = "SABR22/Canadian-streetview-cities"
 K_FOLD_CSV = "image_folds.csv"
 N_FOLDS = 5
@@ -34,7 +35,10 @@ def resize_and_pad(img, target_size):
 
 def process_dataset():
     # Download and process images for training
-    city_ds = load_dataset(HF_DATASET_ID, split="train")
+    # city_ds = load_dataset(HF_DATASET_ID, split="train")
+
+    # Download and process images for testing
+    city_ds = load_dataset(HF_DATASET_ID, split="test")
 
     print(f"Total images: {len(city_ds)}")
 
@@ -91,6 +95,6 @@ def create_folds():
     city_df.to_csv(os.path.join(OUTPUT_DIR, K_FOLD_CSV), index=False)
 
 # Processing calls
-# process_dataset()
+process_dataset()
 
-create_folds()
+# create_folds()
