@@ -74,11 +74,8 @@ def plot_test(train_loss, test_loss, model_name, hp_set, results_dir):
     # Plot curves and final test point
     plt.figure(figsize=(10, 6))
     plt.plot(num_epochs, train_loss, label="Mean Train Loss", color="blue", linewidth=2)
-    plt.scatter(final_epoch, test_loss, color="red", s=200, zorder=5, edgecolor="black", linewidth=2, label="Test Loss")
+    plt.scatter(final_epoch, test_loss, color="red", s=100, zorder=5, edgecolor="black", linewidth=1, label="Test Loss")
     plt.text(final_epoch + 0.5, test_loss, f'Test Loss: {test_loss:.4f}', color="red", va='center')
-
-    # dashed line from last train point to test point for visual connection
-    plt.plot([final_epoch-1, final_epoch], [train_loss[-1], test_loss],color="red", linestyle="--", linewidth=2, alpha=0.8)
 
     # Finalize graph labels and ensure formatting
     plt.title(f"Final Training Loss Curve: {model_name} ({hp_set})")
