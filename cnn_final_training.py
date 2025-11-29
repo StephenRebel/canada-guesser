@@ -20,7 +20,8 @@ from training_reporting import format_data, plot_loss, confusion_matrix_gen, acc
 # TEST_ROOT = "./cnn_testing_dataset"
 # RESULTS_DIR = "./cnn_training_results"
 # CSV_FILE = "./cnn_processed_dataset/image_folds.csv"
-# CSV_TRAIN = "./cnn_training_dataset/test_set.csv"
+# CSV_TRAIN = "./cnn_testing_dataset/test_set.csv"
+MODEL_WEIGHTS = "./models"
 DATA_ROOT = "./cnn_pre_test"
 TEST_ROOT = "./cnn_pre_testing"
 RESULTS_DIR = "./cnn_validation_results_pre"
@@ -159,6 +160,7 @@ def main():
     USE_TQDM = True
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(MODEL_WEIGHTS, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -219,6 +221,21 @@ def main():
 
             print(f"Completed finetune epoch {epoch + 1}/{HP_SET['finetune_epochs']}.\n\tTraining loss: {training_loss}\n")
 
+    # Set save path
+    save_filename = f"{MODEL_NAME}_{HP_INDEX}_final.pth"
+    save_path = os.path.join(MODEL_WEIGHTS, save_filename)
+    
+    # Create a dictionary containing everything needed for inference
+    model_details = {
+        'model_state_dict': model.state_dict(),
+        'class_map': {i: name for i, name in enumerate(city_names)},
+        'hyperparameters': HP_SET,
+        'architecture': MODEL_NAME
+    }
+    
+    torch.save(model_details, save_path)
+    print(f"Model weights and class map saved to: {save_path}")
+
     # Final Testing
     test_loss, predictions, targets = test(model, test_loader, loss_func, device, USE_TQDM)
     train_result["final_predictions"] = predictions
@@ -230,7 +247,7 @@ def main():
     confusion_matrix_gen(train_result["final_predictions"], train_result["final_targets"], MODEL_NAME, HP_INDEX, city_names, RESULTS_DIR)
     accuracy_f1_metrics(train_result["final_predictions"], train_result["final_targets"], city_names, MODEL_NAME, HP_INDEX, RESULTS_DIR)
 
-    print(f"5-Fold Validation run on {MODEL_NAME} and {HP_INDEX} complete.")
+    print(f"Final training run on {MODEL_NAME} and {HP_INDEX} complete.")
 
 if __name__ == "__main__":
     main()
