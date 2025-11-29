@@ -65,6 +65,30 @@ def plot_loss(train_loss, val_loss, model_name, hp_set, results_dir):
     plt.savefig(os.path.join(results_dir, f"{model_name}_{hp_set}_loss_curve.png"))
     plt.close()
 
+# Generate test plot
+def plot_test(train_loss, test_loss, model_name, hp_set, results_dir):
+    test_loss = test_loss[0]
+    num_epochs = range(1, len(train_loss) + 1)
+    final_epoch = len(train_loss)
+
+    # Plot curves and final test point
+    plt.figure(figsize=(10, 6))
+    plt.plot(num_epochs, train_loss, label="Mean Train Loss", color="blue", linewidth=2)
+    plt.scatter(final_epoch, test_loss, color="red", s=200, zorder=5, edgecolor="black", linewidth=2, label="Test Loss")
+    plt.text(final_epoch + 0.5, test_loss, f'Test Loss: {test_loss:.4f}', color="red", va='center')
+
+    # dashed line from last train point to test point for visual connection
+    plt.plot([final_epoch-1, final_epoch], [train_loss[-1], test_loss],color="red", linestyle="--", linewidth=2, alpha=0.8)
+
+    # Finalize graph labels and ensure formatting
+    plt.title(f"Final Training Loss Curve: {model_name} ({hp_set})")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f"{model_name}_{hp_set}_final_loss_curve.png"))
+    plt.close()
 
 # Generate confusion matrix
 # helpful understanding: https://www.geeksforgeeks.org/machine-learning/confusion-matrix-machine-learning
