@@ -33,10 +33,10 @@ cnn_transform = v2.Compose([
                  std=[0.229, 0.224, 0.225]),
 ])
 
-class_names = [
-    "Calgary", "Charlottetown", "Edmonton", "Halifax", "Hamilton",
-    "Kitchener-Waterloo", "Montreal", "Ottawa-Gatineau", "Quebec City",
-    "Saskatoon", "St Johns", "Toronto", "Vancouver", "Victoria", "Winnipeg"
+default_class_names = [
+    "calgary", "charlottetown", "edmonton", "halifax", "hamilton",
+    "kitchener-waterloo", "montreal", "ottawa-gatineau", "quebec_city",
+    "saskatoon", "st_johns", "toronto", "vancouver", "victoria", "winnipeg"
 ]
 
 #ViT Model
@@ -58,9 +58,11 @@ checkpoint = torch.load(
 model2.load_state_dict(checkpoint['model_state_dict'])
 model2.to(device)
 model2.eval()
+cnn_class_map = checkpoint.get("class_map")
+model2_class_names = [cnn_class_map[i] for i in sorted(cnn_class_map.keys())]
 
 #Make prediction
-def predict(img_path: str, model: torch.nn.Module, transform) -> str:
+def predict(img_path: str, model: torch.nn.Module, transform, class_names) -> str:
     img = Image.open(img_path).convert("RGB")
     x = transform(img).unsqueeze(0).to(device)
     with torch.no_grad():
@@ -114,8 +116,8 @@ class App:
             self.pred_label2.config(text="")
             return
 
-        pred1 = predict(self.current_image_path, model1, vit_transform)
-        pred2 = predict(self.current_image_path, model2, cnn_transform)
+        pred1 = predict(self.current_image_path, model1, vit_transform, default_class_names)
+        pred2 = predict(self.current_image_path, model2, cnn_transform, model2_class_names)
         self.pred_label1.config(text=f"ViT Prediction: {pred1}")
         self.pred_label2.config(text=f"CNN Prediction: {pred2}")
 
