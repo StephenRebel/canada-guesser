@@ -16,17 +16,12 @@ from tqdm import tqdm
 from training_reporting import format_data, plot_loss, confusion_matrix_gen, accuracy_f1_metrics, plot_test
 
 # General Configurations
-# DATA_ROOT = "./cnn_processed_dataset"
-# TEST_ROOT = "./cnn_testing_dataset"
-# RESULTS_DIR = "./cnn_training_results"
-# CSV_FILE = "./cnn_processed_dataset/image_folds.csv"
-# CSV_TRAIN = "./cnn_testing_dataset/test_set.csv"
+DATA_ROOT = "./cnn_processed_dataset"
+TEST_ROOT = "./cnn_testing_dataset"
+RESULTS_DIR = "./cnn_training_results"
+CSV_FILE = "./cnn_processed_dataset/image_folds.csv"
+CSV_TRAIN = "./cnn_testing_dataset/test_set.csv"
 MODEL_WEIGHTS = "./models"
-DATA_ROOT = "./cnn_pre_test"
-TEST_ROOT = "./cnn_pre_testing"
-RESULTS_DIR = "./cnn_validation_results_pre"
-CSV_FILE = "./cnn_pre_test/image_folds.csv"
-CSV_TRAIN = "./cnn_pre_testing/test_set.csv"
 NUM_WORKERS = 4
 IMG_SIZE = (320, 320)
 
