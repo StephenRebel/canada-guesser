@@ -64,18 +64,47 @@ test_ds  = dataset["test"]
 
 # Data augmentation for training
 train_transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.Lambda(lambda img: img.crop((
+        0,
+        int(img.height * 0.05),
+        img.width,
+        int(img.height * 0.80)
+    ))),
+
+    transforms.RandomResizedCrop(
+        (IMG_SIZE, IMG_SIZE),
+        scale=(0.6, 1.0),
+        ratio=(0.75, 1.33),
+    ),
     transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+    transforms.ColorJitter(
+        brightness=0.4,
+        contrast=0.4,
+        saturation=0.4,
+        hue=0.1
+    ),
+    transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
+    transforms.RandomGrayscale(p=0.1),
+    transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.3),
+    transforms.RandomSolarize(threshold=128, p=0.2),
+    transforms.RandomPosterize(bits=4, p=0.2),
+    transforms.RandAugment(),
+    transforms.RandomErasing(p=0.5, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
     transforms.ToTensor(),
     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
 test_transform = transforms.Compose([
+    transforms.Lambda(lambda img: img.crop((
+        0,
+        int(img.height * 0.05),
+        img.width,
+        int(img.height * 0.80)
+    ))),
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+    transforms.Normalize(mean=(0.5, 0.5, 0.5),
+                         std=(0.5, 0.5, 0.5))
 ])
 
 #Apply transforms and stack
@@ -296,12 +325,12 @@ final_fold_dict = {
 final_results = [final_fold_dict]
 
 os.makedirs("vit_results", exist_ok=True)
-final_json_path = f"vit_results/{model_name}_final_training_results_{param_set_index}.json"
+final_json_path = f"vit_results/{model_name}_final_training_results_{param_set_index}_V2.json"
 with open(final_json_path, "w") as f:
     json.dump(final_results, f, indent=2)
 print(f"Final results saved → {final_json_path}")
 
 #Save model
 os.makedirs("models", exist_ok=True)
-torch.save(final_model.state_dict(), f"models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
-print(f"Model saved to models/{model_name}_{param_set_index}_finetuned_canadian_streetview.pth")
+torch.save(final_model.state_dict(), f"models/{model_name}_{param_set_index}_finetuned_canadian_streetview_V2.pth")
+print(f"Model saved to models/{model_name}_{param_set_index}_finetuned_canadian_streetview_V2.pth")
