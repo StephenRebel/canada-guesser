@@ -3,11 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from torch.amp import GradScaler, autocast
 from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
+import numpy as np
 import json
 import time
 import sys
@@ -63,45 +66,53 @@ train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
 # Data augmentation for training
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0)),
-    transforms.RandomHorizontalFlip(0.5),
-    transforms.RandomRotation(10),
-    transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
-    transforms.Lambda(lambda img: (
-        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * 0.85))))
-        (*img.size)
-    ),
-    transforms.Resize((192, 192)),
-    transforms.ColorJitter(0.2, 0.2, 0.2, 0.02),
-    transforms.RandomGrayscale(p=0.15),
-    transforms.GaussianBlur(kernel_size=3),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,)*3, (0.5,)*3),
-    transforms.RandomErasing(p=0.1),
+train_transform = A.Compose([
+    A.Lambda(image=lambda img: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :]), 
+    A.Resize(IMG_SIZE, IMG_SIZE),
+    A.HorizontalFlip(p=0.5),
+    A.Rotate(limit=10, p=0.5),
+    A.Perspective(scale=(0.05, 0.4), p=0.5),
+    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+    A.HueSaturationValue(hue_shift_limit=0.02 * 255, sat_shift_limit=0.2 * 255, val_shift_limit=0.2 * 255, p=0.5),
+    A.RandomGamma(p=0.15),
+    A.GaussNoise(var_limit=(10, 50), p=0.3),
+    A.MotionBlur(blur_limit=3, p=0.5),
+    A.CoarseDropout(max_holes=8, max_height=IMG_SIZE//8, max_width=IMG_SIZE//8, p=0.1),
+    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+    ToTensorV2(),
 ])
 
-test_transform = transforms.Compose([
-    transforms.Lambda(lambda img: (
-        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * (1 - 0.15)))))
-        (*img.size)
-    ),
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,)*3, (0.5,)*3),
+# Simpler test transform
+test_transform = A.Compose([
+    A.Lambda(image=lambda img: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :]),
+    A.Resize(IMG_SIZE, IMG_SIZE),
+    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+    ToTensorV2(),
 ])
 
 #Apply transforms and stack
 def train_collate_fn(batch):
-    images = [train_transform(item["image"].copy()) for item in batch]
-    labels = [item["label"] for item in batch]
+    images = []
+    labels = []
+    for item in batch:
+        img_pil = item["image"].copy().convert("RGB")
+        img_np = np.array(img_pil)
+        transformed = train_transform(image=img_np)
+        images.append(transformed['image']) 
+        labels.append(item["label"])
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
     return images, labels
 
 def test_collate_fn(batch):
-    images = [test_transform(item["image"].copy()) for item in batch]
-    labels = [item["label"] for item in batch]
+    images = []
+    labels = []
+    for item in batch:
+        img_pil = item["image"].copy().convert("RGB")
+        img_np = np.array(img_pil)
+        transformed = test_transform(image=img_np)
+        images.append(transformed['image'])
+        labels.append(item["label"])
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
     return images, labels
@@ -153,6 +164,7 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
         #Training
         model.train()
         running_loss = 0.0
+        total_samples = 0
         loader = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
         for step, (imgs, labels) in enumerate(loader, 1):
             imgs, labels = imgs.to(device), labels.to(device)
@@ -172,8 +184,9 @@ def train_model(model, train_data, val_data=None, epochs=5, batch_size=16, devic
                 optimizer.step()
 
             running_loss += loss.item() * imgs.size(0)
+            total_samples += imgs.size(0)
             loader.set_postfix(loss=running_loss / (step * batch_size))
-        epoch_train_loss = running_loss / len(train_loader.dataset)
+        epoch_train_loss = running_loss / total_samples if total_samples > 0 else 0
         train_loss_list.append(epoch_train_loss)
 
         #Validation
@@ -282,7 +295,6 @@ final_model.eval()
 final_predictions = []
 final_targets = []
 correct, total = 0, 0
-loader = tqdm(test_loader, desc="Testing", leave=True)
 
 print("Evaluating on official test set...")
 with torch.no_grad():
