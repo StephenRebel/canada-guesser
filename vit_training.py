@@ -80,7 +80,7 @@ train_transform = A.Compose([
     A.RandomGamma(p=0.15),
     A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
     A.MotionBlur(blur_limit=3, p=0.5),
-    A.CoarseDropout(max_h_size=IMG_SIZE//8, max_w_size=IMG_SIZE//8, max_holes=8, p=0.1),
+    A.CoarseDropout(max_holes=12, min_holes=4, max_height=IMG_SIZE // 8, max_width=IMG_SIZE // 8, min_height=IMG_SIZE // 32, min_width=IMG_SIZE // 32, fill_value=0,  mask_fill_value=None, p=0.4),
     A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     ToTensorV2(),
 ])
