@@ -67,7 +67,7 @@ test_ds  = dataset["test"]
 
 # Data augmentation for training
 train_transform = A.Compose([
-    A.Lambda(image=lambda img: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :]), 
+    A.Lambda(image=lambda img, **kwargs: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :], p=1.0),
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=10, p=0.5),
@@ -84,7 +84,7 @@ train_transform = A.Compose([
 
 # Simpler test transform
 test_transform = A.Compose([
-    A.Lambda(image=lambda img: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :]),
+    A.Lambda(image=lambda img, **kwargs: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :], p=1.0),
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     ToTensorV2(),
