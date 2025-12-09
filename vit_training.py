@@ -65,9 +65,12 @@ dataset = load_dataset("SABR22/Canadian-streetview-cities", streaming=False)
 train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
+def crop_dashcam(img, **kwargs):
+    return img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :]
+
 # Data augmentation for training
 train_transform = A.Compose([
-    A.Lambda(image=lambda img, **kwargs: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :], p=1.0),
+    A.Lambda(image=crop_dashcam, p=1.0),
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.HorizontalFlip(p=0.5),
     A.Rotate(limit=10, p=0.5),
@@ -75,16 +78,16 @@ train_transform = A.Compose([
     A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
     A.HueSaturationValue(hue_shift_limit=0.02 * 255, sat_shift_limit=0.2 * 255, val_shift_limit=0.2 * 255, p=0.5),
     A.RandomGamma(p=0.15),
-    A.GaussNoise(var_limit=(10, 50), p=0.3),
+    A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
     A.MotionBlur(blur_limit=3, p=0.5),
-    A.CoarseDropout(max_holes=8, max_height=IMG_SIZE//8, max_width=IMG_SIZE//8, p=0.1),
+    A.CoarseDropout(max_h_size=IMG_SIZE//8, max_w_size=IMG_SIZE//8, max_holes=8, p=0.1),
     A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     ToTensorV2(),
 ])
 
 # Simpler test transform
 test_transform = A.Compose([
-    A.Lambda(image=lambda img, **kwargs: img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :], p=1.0),
+    A.Lambda(image=crop_dashcam, p=1.0),
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
     ToTensorV2(),
