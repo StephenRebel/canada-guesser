@@ -8,7 +8,6 @@ from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
-import numpy as np
 import json
 import time
 import sys
@@ -63,43 +62,32 @@ dataset = load_dataset("SABR22/Canadian-streetview-cities", streaming=False)
 train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
-class AdaptiveBottomCrop:
-    def __init__(self, min_crop=0.12, max_crop=0.32, dark_thresh=28, texture_thresh=18):
-        self.min_crop = min_crop
-        self.max_crop = max_crop
-        self.dark_thresh = dark_thresh
-        self.texture_thresh = texture_thresh
-
-    def __call__(self, img):
-        w, h = img.size
-        bottom = img.crop((0, int(h * 0.75), w, h))
-        arr = np.array(bottom.convert("L"))
-        mean_val = arr.mean()
-        std_val = arr.std()
-        dashcam_like = (mean_val < self.dark_thresh) and (std_val < self.texture_thresh)
-        crop_ratio = self.max_crop if dashcam_like else self.min_crop
-        crop_pix = int(h * crop_ratio)
-        return img.crop((0, crop_pix, w, h))
-
 # Data augmentation for training
 train_transform = transforms.Compose([
-    AdaptiveBottomCrop(min_crop=0.12, max_crop=0.32),
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ColorJitter(brightness=0.10, contrast=0.10, saturation=0.10, hue=0.02),
-    transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.10)], p=0.2),
-    transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.1),
-    transforms.RandomGrayscale(p=0.03),
+    transforms.Lambda(lambda img: (
+        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * (1 - 0.15)))))
+        (*img.size)
+    ),
+    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0)),
+    transforms.RandomHorizontalFlip(0.5),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(0.2, 0.2, 0.2, 0.02),
+    transforms.RandomGrayscale(p=0.15),
+    transforms.GaussianBlur(kernel_size=3),
+    transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
     transforms.ToTensor(),
-    transforms.RandomErasing(p=0.2, scale=(0.02, 0.10), ratio=(0.3, 3.3), value="random"),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    transforms.Normalize((0.5,)*3, (0.5,)*3),
+    transforms.RandomErasing(p=0.1),
 ])
 
 test_transform = transforms.Compose([
-    AdaptiveBottomCrop(min_crop=0.12, max_crop=0.32),
+    transforms.Lambda(lambda img: (
+        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * (1 - 0.15)))))
+        (*img.size)
+    ),
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    transforms.Normalize((0.5,)*3, (0.5,)*3),
 ])
 
 #Apply transforms and stack
