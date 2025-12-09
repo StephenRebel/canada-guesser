@@ -64,17 +64,18 @@ test_ds  = dataset["test"]
 
 # Data augmentation for training
 train_transform = transforms.Compose([
-    transforms.Lambda(lambda img: (
-        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * (1 - 0.15)))))
-        (*img.size)
-    ),
     transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0)),
     transforms.RandomHorizontalFlip(0.5),
     transforms.RandomRotation(10),
+    transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
+    transforms.Lambda(lambda img: (
+        lambda w, h: img.crop((0, int(0.05 * h), w, int(h * 0.85))))
+        (*img.size)
+    ),
+    transforms.Resize((192, 192)),
     transforms.ColorJitter(0.2, 0.2, 0.2, 0.02),
     transforms.RandomGrayscale(p=0.15),
     transforms.GaussianBlur(kernel_size=3),
-    transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
     transforms.ToTensor(),
     transforms.Normalize((0.5,)*3, (0.5,)*3),
     transforms.RandomErasing(p=0.1),
