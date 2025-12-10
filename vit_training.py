@@ -8,6 +8,7 @@ from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
+import numpy as np
 import json
 import time
 import sys
@@ -84,27 +85,15 @@ test_transform = transforms.Compose([
 
 #Apply transforms and stack
 def train_collate_fn(batch):
-    images = []
-    labels = []
-    for item in batch:
-        img_pil = item["image"].copy().convert("RGB")
-        img_np = np.array(img_pil)
-        transformed = train_transform(image=img_np)
-        images.append(transformed['image']) 
-        labels.append(item["label"])
+    images = [train_transform(item["image"].copy()) for item in batch]
+    labels = [item["label"] for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
     return images, labels
 
 def test_collate_fn(batch):
-    images = []
-    labels = []
-    for item in batch:
-        img_pil = item["image"].copy().convert("RGB")
-        img_np = np.array(img_pil)
-        transformed = test_transform(image=img_np)
-        images.append(transformed['image'])
-        labels.append(item["label"])
+    images = [test_transform(item["image"].copy()) for item in batch]
+    labels = [item["label"] for item in batch]
     images = torch.stack(images)
     labels = torch.tensor(labels, dtype=torch.long)
     return images, labels
