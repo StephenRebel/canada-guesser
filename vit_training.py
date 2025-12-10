@@ -3,14 +3,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from torch.amp import GradScaler, autocast
 from datasets import load_dataset
 import timm
 from sklearn.model_selection import KFold
 from tqdm.auto import tqdm
-import numpy as np
 import json
 import time
 import sys
@@ -65,30 +62,24 @@ dataset = load_dataset("SABR22/Canadian-streetview-cities", streaming=False)
 train_ds = dataset["train"]
 test_ds  = dataset["test"]
 
-def crop_dashcam(img, **kwargs):
-    return img[int(0.05 * img.shape[0]):int(0.85 * img.shape[0]), :, :]
-
 # Data augmentation for training
-train_transform = A.Compose([
-    A.Lambda(image=crop_dashcam, p=1.0),
-    A.Resize(IMG_SIZE, IMG_SIZE),
-    A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=10, p=0.5),
-    A.Perspective(scale=(0.05, 0.4), p=0.5),
-    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
-    A.HueSaturationValue(hue_shift_limit=0.02 * 255, sat_shift_limit=0.2 * 255, val_shift_limit=0.2 * 255, p=0.5),
-    A.RandomGamma(p=0.15),
-    A.MotionBlur(blur_limit=3, p=0.5),
-    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-    ToTensorV2(),
+train_transform = transforms.Compose([
+    transforms.Lambda(lambda img: img.crop((0, int(0.05 * img.height), img.width, int(0.85 * img.height)))),  # Crop top 5%, bottom 15%
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+    transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.15, p=0.5)], p=0.3),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
 # Simpler test transform
-test_transform = A.Compose([
-    A.Lambda(image=crop_dashcam, p=1.0),
-    A.Resize(IMG_SIZE, IMG_SIZE),
-    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-    ToTensorV2(),
+test_transform = transforms.Compose([
+    transforms.Lambda(lambda img: img.crop((0, int(0.05 * img.height), img.width, int(0.85 * img.height)))),
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
 #Apply transforms and stack
